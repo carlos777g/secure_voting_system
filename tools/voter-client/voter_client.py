@@ -2,7 +2,8 @@
 """voter-client: casts a vote against a secure-voting-system ledger-node.
 
 Usage:
-    python voter_client.py --primary-url URL --credential-file PATH < vote.json
+    python voter_client.py --primary-url URL --tally-authority-url URL \
+        --credential-file PATH < vote.json
 
 Reads the vote payload (arbitrary JSON) from stdin, encrypts it for the
 election's decryption key, signs the encrypted package with a fresh
@@ -56,6 +57,13 @@ def load_credential(path: str) -> dict:
     except json.JSONDecodeError as err:
         raise CredentialFileError(f"{path} is not valid JSON: {err}") from err
 
+    if (
+        isinstance(credential, dict)
+        and set(credential.keys()) == {"credential"}
+        and isinstance(credential["credential"], dict)
+    ):
+        credential = credential["credential"]
+
     required = {"token", "issued_at", "expires_at", "signature"}
     missing = required - credential.keys()
     if missing:
@@ -71,14 +79,14 @@ def read_vote_from_stdin() -> dict:
         raise VoteInputError(f"stdin is not valid JSON: {err}") from err
 
 
-def fetch_election_public_key(primary_url: str):
+def fetch_election_public_key(tally_authority_url: str):
     try:
-        response = requests.get(f"{primary_url}/election-key", timeout=10)
+        response = requests.get(f"{tally_authority_url}/public-key", timeout=10)
     except requests.RequestException as err:
-        raise ElectionKeyFetchError(f"could not reach {primary_url}/election-key: {err}") from err
+        raise ElectionKeyFetchError(f"could not reach {tally_authority_url}/public-key: {err}") from err
 
     if response.status_code != 200:
-        raise ElectionKeyFetchError(f"GET /election-key returned {response.status_code}")
+        raise ElectionKeyFetchError(f"GET /public-key returned {response.status_code}")
 
     try:
         return load_rsa_public_key(response.content)
@@ -106,15 +114,17 @@ def submit_vote(primary_url: str, credential: dict, vote: dict) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Cast a vote against a ledger-node primary.")
     parser.add_argument("--primary-url", required=True, help="Base URL of the primary ledger-node")
+    parser.add_argument("--tally-authority-url", required=True, help="Base URL of tally-authority")
     parser.add_argument("--credential-file", required=True, help="Path to a JSON ballot credential")
     args = parser.parse_args()
 
     primary_url = args.primary_url.rstrip("/")
+    tally_authority_url = args.tally_authority_url.rstrip("/")
 
     try:
         credential = load_credential(args.credential_file)
         vote_content = read_vote_from_stdin()
-        election_public_key = fetch_election_public_key(primary_url)
+        election_public_key = fetch_election_public_key(tally_authority_url)
         vote = {
             "type": "anonymous_vote",
             **build_encrypted_vote(vote_content, credential["token"], election_public_key),
