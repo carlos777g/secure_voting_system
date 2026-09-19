@@ -1,5 +1,4 @@
 import "dotenv/config";
-import { readFileSync } from "node:fs";
 import { ensureEd25519KeyPair } from "@secure-voting/shared";
 import { loadConfig } from "./config.js";
 import { loadChain, tokenHashSetFromChain } from "./chain-store.js";
@@ -16,31 +15,13 @@ const state = { chain, tokenHashSet: tokenHashSetFromChain(chain) };
 
 const authorityPublicKey = await fetchAuthorityPublicKey(config.authorityUrl);
 
-let electionPublicKeyPem;
-try {
-  electionPublicKeyPem = readFileSync(config.electionPublicKeyPath, "utf8");
-} catch {
-  throw new Error(
-    `could not read ELECTION_PUBLIC_KEY_PATH (${config.electionPublicKeyPath}) — ` +
-      "run `node scripts/generate-election-key.js` to create a placeholder keypair for local dev"
-  );
-}
-
 // Convention: on a replica, config.peers[0] is always the primary's URL —
 // used both as the broadcast/redirect target and as where to fetch the
 // primary's public key from. See config.js and dev-cluster.js.
 const primaryPublicKey =
   config.role === "primary" ? publicKey : await fetchPeerPublicKey(config.peers[0]);
 
-const app = createServer({
-  config,
-  state,
-  publicKeyPem,
-  authorityPublicKey,
-  primaryPublicKey,
-  privateKey,
-  electionPublicKeyPem
-});
+const app = createServer({ config, state, publicKeyPem, authorityPublicKey, primaryPublicKey, privateKey });
 
 app.listen(config.port, () => {
   // eslint-disable-next-line no-console
