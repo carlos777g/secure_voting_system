@@ -12,11 +12,17 @@ Refuses to overwrite an existing keypair.
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+SERVICE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, SERVICE_DIR)
 
-from crypto_utils import generate_election_keypair, private_key_to_pem, public_key_to_pem  # noqa: E402
+from crypto_utils import (  # noqa: E402
+    generate_election_keypair,
+    private_key_to_pem,
+    public_key_fingerprint,
+    public_key_to_pem,
+)
 
-KEYS_DIR = os.environ.get("KEYS_DIR", os.path.join(os.path.dirname(__file__), "..", "keys"))
+KEYS_DIR = os.environ.get("KEYS_DIR", os.path.join(SERVICE_DIR, "keys"))
 PRIVATE_KEY_PATH = os.path.join(KEYS_DIR, "election_private.pem")
 PUBLIC_KEY_PATH = os.path.join(KEYS_DIR, "election_public.pem")
 
@@ -41,7 +47,8 @@ def main() -> None:
 
     os.chmod(PRIVATE_KEY_PATH, 0o600)
 
-    print(f"[generate-election-keys] wrote {PUBLIC_KEY_PATH} and {PRIVATE_KEY_PATH}")
+    fingerprint = public_key_fingerprint(public_key)
+    print(f"[generate-election-keys] wrote {PUBLIC_KEY_PATH} and {PRIVATE_KEY_PATH} (fingerprint: {fingerprint})")
     print("[generate-election-keys] back up the private key now — losing it makes every vote unrecoverable")
 
 

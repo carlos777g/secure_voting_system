@@ -10,7 +10,12 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-KEYS_DIR = os.environ.get("KEYS_DIR", os.path.join(os.path.dirname(__file__), "keys"))
+from cryptography.hazmat.primitives import serialization
+
+from crypto_utils import public_key_fingerprint
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+KEYS_DIR = os.environ.get("KEYS_DIR", os.path.join(SCRIPT_DIR, "keys"))
 PUBLIC_KEY_PATH = os.path.join(KEYS_DIR, "election_public.pem")
 PORT = int(os.environ.get("PORT", "5000"))
 
@@ -50,8 +55,11 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     public_key_pem = load_public_key_pem()
+    public_key = serialization.load_pem_public_key(public_key_pem)
+    fingerprint = public_key_fingerprint(public_key)
     httpd = HTTPServer(("0.0.0.0", PORT), Handler)
     httpd.public_key_pem = public_key_pem
+    print(f"[tally-authority] loaded public key from {PUBLIC_KEY_PATH} (fingerprint: {fingerprint})")
     print(f"[tally-authority] serving GET /public-key on :{PORT}")
     httpd.serve_forever()
 

@@ -4,6 +4,7 @@ the same wire format voter-client produces (see tools/voter-client/crypto_utils.
 """
 
 import base64
+import hashlib
 import json
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -45,6 +46,17 @@ def public_key_to_pem(public_key) -> bytes:
 
 def load_private_key(pem: bytes):
     return serialization.load_pem_private_key(pem, password=None)
+
+
+def public_key_fingerprint(public_key) -> str:
+    """SHA-256 of the SubjectPublicKeyInfo DER, hex-encoded. Used to log which
+    key a process actually loaded, so a keys-dir/cwd mismatch is visible
+    immediately instead of surfacing as a generic decryption failure."""
+    der = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return hashlib.sha256(der).hexdigest()
 
 
 class VoteIntegrityError(Exception):

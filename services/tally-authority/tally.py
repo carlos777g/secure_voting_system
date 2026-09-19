@@ -14,13 +14,15 @@ Usage:
 import argparse
 import json
 import sys
+from pathlib import Path
 
 import requests
 
-from crypto_utils import VoteIntegrityError, decrypt_and_verify_vote, load_private_key
+from crypto_utils import VoteIntegrityError, decrypt_and_verify_vote, load_private_key, public_key_fingerprint
 from majority import compute_majority_chain
 
-KEYS_DIR_DEFAULT = "keys"
+SCRIPT_DIR = Path(__file__).resolve().parent
+KEYS_DIR_DEFAULT = SCRIPT_DIR / "keys"
 
 
 def fetch_chain(url: str) -> list:
@@ -75,7 +77,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--private-key-path",
-        default=f"{KEYS_DIR_DEFAULT}/election_private.pem",
+        default=str(KEYS_DIR_DEFAULT / "election_private.pem"),
         help="Path to the election private key (default: keys/election_private.pem)",
     )
     args = parser.parse_args()
@@ -91,6 +93,9 @@ def main() -> None:
     except OSError as err:
         print(f"[KeyLoadError] (N/A): could not read {args.private_key_path}: {err}", file=sys.stderr)
         sys.exit(1)
+
+    fingerprint = public_key_fingerprint(private_key.public_key())
+    print(f"[tally] loaded private key from {args.private_key_path} (public key fingerprint: {fingerprint})", file=sys.stderr)
 
     try:
         result = run_tally(ledger_urls, private_key)
