@@ -1,5 +1,5 @@
 import { getEligibleVoter, getActiveBallot, insertBallotAndMarkVoted } from "./db.js";
-import { issueCredential, resignCredential } from "./credential.js";
+import { issueCredential, resignCredential } from "@secure-voting/shared";
 
 export class VoterNotEligibleError extends Error {}
 

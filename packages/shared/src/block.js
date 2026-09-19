@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { canonicalStringify } from "./canonical.js";
+import { verifyBytes } from "./keys.js";
 
 export function sha256Hex(input) {
   const buffer = typeof input === "string" ? Buffer.from(input, "utf8") : input;
@@ -63,6 +64,33 @@ export function isChainInternallyValid(chain) {
     const block = chain[i];
     if (!isBlockHashValid(block)) return false;
     if (i > 0 && block.previousHash !== chain[i - 1].hash) return false;
+  }
+  return true;
+}
+
+// The fixed convention for what bytes get signed: the raw 32 bytes of the
+// block's hash, not its hex string's UTF-8 bytes. Both the signer and every
+// verifier must use this exact same function, or signatures that were
+// produced correctly will fail to verify for a reason that has nothing to
+// do with tampering.
+export function blockHashBytes(hash) {
+  return Buffer.from(hash, "hex");
+}
+
+// Verifies every non-genesis block in a chain against a single known
+// signer's public key (the block-producing node in a single-writer
+// topology). This check needs no comparison against any other node's
+// chain: a chain that fails this cannot have been legitimately produced by
+// that signer, full stop. What it cannot catch is the signer itself
+// producing a *different*, internally-consistent, correctly-signed
+// history — that requires comparing against independent copies held by
+// other nodes (see detectDivergence in consensus.js).
+export function isChainAuthenticallySigned(chain, publicKey) {
+  for (const block of chain) {
+    if (block.nodeId === "genesis") continue;
+    if (typeof block.signature !== "string" || block.signature.length === 0) return false;
+    const signature = Buffer.from(block.signature, "base64url");
+    if (!verifyBytes(publicKey, blockHashBytes(block.hash), signature)) return false;
   }
   return true;
 }

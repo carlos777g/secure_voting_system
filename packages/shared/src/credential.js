@@ -1,16 +1,15 @@
 import { randomBytes } from "node:crypto";
-import { canonicalStringify } from "@secure-voting/shared";
+import { canonicalStringify } from "./canonical.js";
 import { signBytes, verifyBytes } from "./keys.js";
 
 function credentialBytes({ token, issued_at, expires_at }) {
   return Buffer.from(canonicalStringify({ token, issued_at, expires_at }), "utf8");
 }
 
-// The token itself is the only part of this credential that ever gets
-// hashed into a vote (as ballot_token_hash, computed on the Python side).
-// issued_at/expires_at are part of what gets signed, so a ledger node can
-// reject an expired credential without needing the token's plaintext for
-// anything beyond that hash.
+// The token is the only part of this credential that ever gets hashed into
+// a vote (as ballot_token_hash, computed on the Python side).
+// issued_at/expires_at are signed alongside it so any relying party (a
+// ledger node) can reject an expired credential locally.
 export function issueCredential({ privateKey, ttlMs, now = Date.now() }) {
   const token = randomBytes(32).toString("base64url");
   const issued_at = now;
@@ -20,7 +19,7 @@ export function issueCredential({ privateKey, ttlMs, now = Date.now() }) {
 }
 
 // Recomputes the signature for an already-issued, still-unexpired
-// credential instead of minting a new token. Only safe because Ed25519
+// credential instead of minting a new token. Safe only because Ed25519
 // signing is deterministic — the result is byte-for-byte identical to the
 // signature produced at original issuance.
 export function resignCredential({ privateKey, token, issued_at, expires_at }) {
@@ -28,6 +27,8 @@ export function resignCredential({ privateKey, token, issued_at, expires_at }) {
   return { token, issued_at, expires_at, signature: signature.toString("base64url") };
 }
 
+// The relying-party side: any ledger node holding the authority's public
+// key calls this locally, with no network round-trip back to the authority.
 export function verifyCredential({ publicKey, token, issued_at, expires_at, signature }, now = Date.now()) {
   if (now >= expires_at) {
     return { valid: false, reason: "credential expired" };
