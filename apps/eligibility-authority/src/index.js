@@ -1,0 +1,16 @@
+import "dotenv/config";
+import { config } from "./config.js";
+import { ensureAuthorityKeys } from "./keys.js";
+import { openDatabase } from "./db.js";
+import { createServer } from "./server.js";
+
+const { privateKey, publicKey } = ensureAuthorityKeys(config.keysDir);
+const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+const db = openDatabase(config.dbPath);
+
+const app = createServer({ db, privateKey, publicKeyPem, ttlMs: config.credentialTtlMs });
+
+app.listen(config.port, () => {
+  // eslint-disable-next-line no-console
+  console.log(`eligibility-authority listening on port ${config.port}`);
+});
