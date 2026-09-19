@@ -18,11 +18,13 @@ voter-client (Python CLI)
   - encrypts (AES-GCM + RSA-OAEP) and signs (RSA-PSS) the vote
   - submits the encrypted package to any ledger-node
 
-ledger-node x N (Node.js, one process per port)
-  - verifies the ballot token's signature and that it hasn't been used
-  - appends the encrypted, opaque vote package as a block
-  - gossips its chain with peers; flags nodes that diverge from the majority
-  - never holds any key capable of decrypting a vote
+ledger-node x N (Node.js, one process per port; one "primary", the rest "replica")
+  - primary: verifies the ballot token's signature and that it hasn't been
+    used, appends the vote as a block, broadcasts it to every replica
+  - replica: independently validates every broadcast block before
+    appending it — never trusts the primary blindly
+  - all nodes: /sync compares chains across peers and flags divergence;
+    never holds any key capable of decrypting a vote
 
 tally-authority (Python, separate service)
   - the only holder of the election's decryption private key
@@ -49,13 +51,29 @@ docs/
 
 ## Status
 
-Currently implemented: `packages/shared` (canonical JSON serialization,
-block hashing, chain integrity checks, majority-hash divergence detection),
-with a test suite covering the "sophisticated tamper" scenario — a locally
-consistent chain that still disagrees with the network.
+Currently implemented:
 
-Not yet implemented: `eligibility-authority`, `ledger-node`,
-`tally-authority`, `voter-client`.
+- `packages/shared` — canonical JSON serialization, block hashing, chain
+  integrity checks, majority-hash divergence detection. Test suite covers
+  the "sophisticated tamper" scenario: a locally consistent chain that
+  still disagrees with the network.
+- `apps/eligibility-authority` — voter roll (SQLite), Ed25519-signed,
+  time-limited ballot credentials, race-free issuance (single
+  synchronous transaction), idempotent reissue of an unexpired credential.
+  See `apps/eligibility-authority/README.md` for the `has_voted`-at-issuance
+  tradeoff, its operational cost, and a suggested (unimplemented) admin
+  extension point for the team.
+
+- `apps/ledger-node` — primary/replica replicated ledger. The primary
+  accepts votes and proposes blocks; every replica independently validates
+  each broadcast block (chain continuity, hash correctness, signature)
+  before appending it. Two complementary tamper-detection mechanisms —
+  local signature authentication and cross-node majority comparison — are
+  documented and demonstrated live in `apps/ledger-node/README.md`,
+  including a reproducible `curl` walkthrough of both the
+  "compromised replica" and "compromised primary" scenarios.
+
+Not yet implemented: `tally-authority`, `voter-client`.
 
 ## Setup
 
@@ -63,8 +81,14 @@ JS workspace:
 
 ```bash
 pnpm install
-pnpm --filter @secure-voting/shared test
+pnpm test          # runs every workspace package's test script
+pnpm dev            # runs every workspace package's dev script, in parallel
+                     # (currently only eligibility-authority has one)
 ```
+
+`eligibility-authority` reads its configuration from environment variables
+(see `apps/eligibility-authority/.env.example`); copy it to `.env` in that
+directory to override defaults locally.
 
 Python services (once implemented) will each have their own
 `requirements.txt` / virtual environment, documented in their own
