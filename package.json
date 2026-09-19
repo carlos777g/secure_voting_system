@@ -10,5 +10,10 @@
   "scripts": {
     "test": "pnpm -r --if-present run test",
     "dev": "pnpm -r --if-present --parallel run dev"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }
