@@ -6,13 +6,26 @@ import { broadcastBlock } from "./peer-client.js";
 import { runSync } from "./sync.js";
 import { tamperChain, TamperError } from "./tamper.js";
 
-export function createServer({ config, state, publicKeyPem, authorityPublicKey, primaryPublicKey, privateKey }) {
+export function createServer({
+  config,
+  state,
+  publicKeyPem,
+  authorityPublicKey,
+  primaryPublicKey,
+  privateKey,
+  electionPublicKeyPem
+}) {
   const app = express();
   app.use(express.json());
 
   app.get("/health", (req, res) => res.json({ status: "ok", nodeId: config.nodeId, role: config.role }));
 
   app.get("/public-key", (req, res) => res.type("text/plain").send(publicKeyPem));
+
+  // The election's RSA-OAEP public key — voter-client fetches this instead
+  // of carrying its own copy. Only the public half ever passes through
+  // here; ledger-node never holds anything capable of decrypting a vote.
+  app.get("/election-key", (req, res) => res.type("text/plain").send(electionPublicKeyPem));
 
   app.get("/status", (req, res) => {
     res.json({
