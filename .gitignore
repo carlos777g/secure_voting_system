@@ -1,0 +1,23 @@
+# JS workspace
+node_modules/
+dist/
+
+# Runtime data and key material — never commit these
+data/
+keys/
+*.db
+*.db-journal
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python side
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+.DS_Store
