@@ -1,0 +1,17 @@
+{
+  "name": "@secure-voting/ledger-node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node src/dev-cluster.js",
+    "start": "node src/index.js",
+    "test": "node --test src/*.test.js"
+  },
+  "dependencies": {
+    "@secure-voting/shared": "workspace:*",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
