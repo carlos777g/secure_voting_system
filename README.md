@@ -162,6 +162,38 @@ is tampered with, and `apps/ledger-node/README.md` for the `POST
 /admin/tamper` demo endpoint used to simulate it (local/educational use
 only — no authentication, never expose it otherwise).
 
+## Extension points: constraining the demo for a real run
+
+Three things are deliberately unconstrained right now — fine for a demo,
+but worth knowing before you run this with a real group:
+
+- **Voter roster is a hardcoded whitelist.** `apps/eligibility-authority/src/db.js`
+  seeds exactly `VOTANTE001`–`VOTANTE003` (the `DEMO_VOTERS` array) the
+  first time its database is empty — it is not a range, so `VOTANTE010`
+  is simply not eligible (`POST /identify` returns `403`). To support
+  your own roster: either edit `DEMO_VOTERS` directly, or add a real
+  import path (a `POST /admin/import-voters` endpoint, or a seed script
+  reading a CSV) — same audited-admin-action pattern already used for the
+  suggested (unimplemented) `has_voted` reset endpoint in
+  `apps/eligibility-authority/README.md`. There is currently no built-in
+  way to auto-assign voter IDs; that logic would live here too.
+- **`voter-client`'s two URL flags are independent and both matter.**
+  `--primary-url` is where the vote is *submitted* (any `ledger-node`
+  configured with `ROLE=primary`); `--tally-authority-url` is only used
+  to *fetch the encryption key* before submitting. Pointing either one at
+  the wrong place fails at a different step (`ElectionKeyFetchError` vs.
+  `NetworkError`/`VoteRejectedError`) — see `tools/voter-client/README.md`.
+- **The vote payload is unrestricted JSON.** Nothing in `ledger-node` or
+  `tally-authority` validates it against a candidate list — by design,
+  neither component ever inspects vote content before `tally-authority`
+  decrypts it after close. Whatever key/value shape `voter-client` is
+  given on stdin is exactly what gets counted, verbatim. To restrict
+  voting to a fixed candidate list, add that validation client-side, in
+  `tools/voter-client/voter_client.py`, before encryption — validating
+  downstream in `ledger-node` or `tally-authority` would mean one of them
+  has to understand vote content, which breaks the opacity both are built
+  around.
+
 ## Deployment note for the team
 
 Ledger nodes currently run as plain Node processes on localhost, on
