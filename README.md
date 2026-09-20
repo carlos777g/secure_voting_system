@@ -162,6 +162,15 @@ is tampered with, and `apps/ledger-node/README.md` for the `POST
 /admin/tamper` demo endpoint used to simulate it (local/educational use
 only — no authentication, never expose it otherwise).
 
+## Restart all the services:
+
+Use this commands or delete those files manually:
+```bash
+rm -rf apps/eligibility-authority/data apps/eligibility-authority/keys
+rm -rf apps/ledger-node/data apps/ledger-node/keys
+rm -rf services/tally-authority/keys
+```
+
 ## Extension points: constraining the demo for a real run
 
 Three things are deliberately unconstrained right now — fine for a demo,
