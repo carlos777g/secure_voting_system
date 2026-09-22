@@ -1,113 +1,71 @@
 # ledger-node
 
-A hash-chained, replicated ledger for encrypted, opaque vote packages. Run
-as a small cluster: one `primary`, N `replica`s.
+Un libro de registro (*ledger*) replicado y encadenado por hashes para paquetes de votos cifrados y opacos. Se ejecuta como un clúster pequeño: un `primary` y N `replica`s.
 
-## Why single-writer, not fully decentralized
+## Por qué un solo escritor (*single-writer*) y no totalmente descentralizado
 
-An earlier version of this design let any node accept a vote independently.
-That does not converge: three nodes each appending whatever vote happened
-to arrive at them produce three genuinely different chains even with zero
-malicious behavior, because nothing orders the writes. "Compare hashes,
-majority wins" is meaningless if honest nodes routinely disagree by
-default.
+Una versión anterior de este diseño permitía que cualquier nodo aceptara un voto de forma independiente. Esto no converge: tres nodos, cada uno añadiendo cualquier voto que casualmente les llegara, producen tres cadenas genuinamente diferentes incluso sin un solo comportamiento malicioso, porque no hay nada que ordene las escrituras. "Comparar hashes, gana la mayoría" carece de sentido si los nodos honestos difieren de forma rutinaria por defecto.
 
-The fix: only the `primary` accepts vote submissions (`POST /votes`) and
-proposes blocks. It broadcasts each new block to every configured peer
-(`POST /peer/blocks`). Every replica **independently validates** an
-incoming block before appending it — it does not trust the primary's word,
-it checks:
+La solución: solo el `primary` acepta envíos de votos (`POST /votes`) y propone bloques. Este transmite cada nuevo bloque a cada par (*peer*) configurado (`POST /peer/blocks`). Cada réplica **valida de forma independiente** el bloque entrante antes de añadirlo; no confía en la palabra del primary, verifica lo siguiente:
 
-1. the block extends its own current tip (`previousHash` matches),
-2. the block's `hash` is correctly derived from its own content,
-3. the block's `signature` verifies against the primary's known public key,
-4. the block's `ballot_token_hash` hasn't already been seen locally.
+1. que el bloque extienda el extremo actual de su propia cadena (`previousHash` coincide),
+2. que el `hash` del bloque esté derivado correctamente de su propio contenido,
+3. que la firma (`signature`) del bloque se verifique contra la clave pública conocida del primary,
+4. que el `ballot_token_hash` del bloque no se haya visto previamente de forma local.
 
-If any of these fail, the replica rejects the block and does not append
-it. See `src/replication.js`.
+Si cualquiera de estas comprobaciones falla, la réplica rechaza el bloque y no lo añade. Consulta `src/replication.js`.
 
-## Two tamper-detection mechanisms, and why you need both
+## Dos mecanismos de detección de manipulaciones, y por qué se necesitan ambos
 
-**Mechanism 1 — local signature authentication.** Every non-genesis block
-must be signed by the primary's private key. An attacker who compromises a
-**replica** gets that replica's process and its own Ed25519 key — nothing
-else. If they rewrite the replica's local chain, they can recompute hashes
-correctly, but they cannot produce a signature the primary's public key
-will accept, because they don't hold the primary's private key. This is
-caught *locally*, by the tampered node itself or by anyone reading its
-`/sync` result — no comparison against other nodes required.
-See `packages/shared/src/block.js` → `isChainAuthenticallySigned`.
+**Mecanismo 1 — Autenticación de firma local.** Todo bloque que no sea el bloque génesis (*genesis block*) debe estar firmado por la clave privada del primary. Un atacante que comprometa una **réplica** obtiene el proceso de esa réplica y su propia clave Ed25519, nada más. Si reescribe la cadena local de la réplica, puede volver a calcular los hashes correctamente, pero no puede generar una firma que la clave pública del primary acepte, ya que no posee la clave privada del primary. Esto se detecta *localmente*, por el propio nodo alterado o por cualquiera que lea el resultado de su `/sync`, sin requerir comparación contra otros nodos.
+Consulta `packages/shared/src/block.js` → `isChainAuthenticallySigned`.
 
-**Mechanism 2 — cross-node majority comparison.** Mechanism 1 cannot catch
-the primary compromising *itself*: the primary holds its own real private
-key, so it can rewrite its own history and re-sign it validly. A
-self-check against its own signature will still pass. The only thing that
-catches this is comparing the primary's chain against independent copies
-held by replicas — if two replicas still hold the original block and the
-primary now holds something else, majority-hash agreement flags the
-primary as the divergent one. See `packages/shared/src/consensus.js` →
-`detectDivergence`, invoked from `src/sync.js`.
+**Mecanismo 2 — Comparación por mayoría entre nodos.** El Mecanismo 1 no puede detectar que el primary se comprometa *a sí mismo*: el primary posee su propia clave privada real, por lo que puede reescribir su propio historial y volver a firmarlo válidamente. Una autocomprobación contra su propia firma seguirá pasando. Lo único que detecta esto es comparar la cadena del primary contra las copias independientes que poseen las réplicas: si dos réplicas aún conservan el bloque original y el primary ahora contiene algo diferente, el acuerdo de hash por mayoría señalará al primary como el nodo divergente. Consulta `packages/shared/src/consensus.js` → `detectDivergence`, invocado desde `src/sync.js`.
 
-Verified live, not just in unit tests — see the two scenarios below.
+Verificado en vivo, no solo en pruebas unitarias; consulta los dos escenarios a continuación.
 
-## Running the demo cluster
+## Ejecución del clúster de demostración
 
 ```bash
-# from the repo root, with eligibility-authority already running on :4000
+# Desde la raíz del repositorio, con eligibility-authority ejecutándose en el puerto :4000
 pnpm --filter @secure-voting/ledger-node dev
-# starts node-a (primary, :4001), node-b and node-c (replicas, :4002/:4003)
+# Inicia node-a (primary, :4001), node-b y node-c (replicas, :4002/:4003)
+
 ```
 
-## Reproducing both tamper scenarios by hand
+## Reproducción manual de ambos escenarios de alteración
 
 ```bash
-# 1. cast a real vote through the primary (see README root for the full
-#    identify -> credential -> vote flow), then:
+# 1. Emitir un voto real a través del primary (consulta el README principal para el flujo completo
+#    identify -> credential -> vote) y luego:
 
-# Scenario A — compromise a REPLICA directly
+# Escenario A — Comprometer una RÉPLICA directamente
 curl -X POST http://localhost:4002/admin/tamper \
   -H "Content-Type: application/json" \
   -d '{"blockIndex":1,"dataPatch":{"ballot_token_hash":"FORGED"}}'
 
 curl -X POST http://localhost:4002/sync
-# -> selfAuthenticallySigned: false — caught locally, instantly
+# -> selfAuthenticallySigned: false — detectado localmente de forma instantánea
 
-# Scenario B — compromise the PRIMARY itself
+# Escenario B — Comprometer el propio PRIMARY
 curl -X POST http://localhost:4001/admin/tamper \
   -H "Content-Type: application/json" \
   -d '{"blockIndex":1,"dataPatch":{"ballot_token_hash":"REWRITTEN"}}'
 
 curl -X POST http://localhost:4001/sync
-# -> selfAuthenticallySigned: true  (it has its own real key — passes!)
-# -> divergentNodeIds includes the primary's own nodeId anyway, because
-#    the untouched replicas still hold the original block
+# -> selfAuthenticallySigned: true  (posee su propia clave real — ¡pasa la prueba!)
+# -> divergentNodeIds incluye el nodeId del propio primary de todas formas,
+#    porque las réplicas no alteradas aún conservan el bloque original
+
 ```
 
-`POST /admin/tamper` is **demo-only**. It exists to make the tamper
-scenarios above reproducible on demand; it must never be exposed outside a
-local educational environment, and there is no authentication in front of
-it — anyone who can reach a node's HTTP port can rewrite its local history
-through it.
+`POST /admin/tamper` es **exclusivo para demostración**. Existe para hacer que los escenarios de alteración anteriores sean reproducibles bajo demanda; nunca debe exponerse fuera de un entorno educativo local y no cuenta con autenticación: cualquiera que pueda alcanzar el puerto HTTP de un nodo puede reescribir su historial local a través de él.
 
-## Environment variables
+## Variables de entorno
 
-See `.env.example`. The one convention worth calling out: on a **replica**,
-`PEERS`'s first entry must be the primary's URL — it doubles as the
-redirect target for stray `POST /votes` calls and as where the replica
-fetches the primary's public key at startup. On the **primary**, `PEERS`
-must list its replicas — that is who it broadcasts new blocks to. Getting
-this backwards (the primary configured with no peers) produces no error —
-`broadcastFailures` just comes back empty, because there was nothing to
-broadcast to — it looks like success. This exact mistake happened while
-building this service; `dev-cluster.js` now sets it correctly, but keep it
-in mind if you reconfigure peers by hand.
+Consulta `.env.example`. Una convención importante a destacar: en una **réplica**, la primera entrada de `PEERS` debe ser la URL del primary, ya que cumple la doble función de ser el destino de redirección para llamadas `POST /votes` extraviadas y el lugar desde donde la réplica obtiene la clave pública del primary durante el inicio. En el **primary**, `PEERS` debe listar sus réplicas, que es a quienes transmite los nuevos bloques. Configurar esto al revés (el primary configurado sin pares) no produce ningún error: `broadcastFailures` simplemente regresa vacío al no haber a quién transmitir, aparentando un resultado exitoso. Este error exacto ocurrió durante la construcción del servicio; `dev-cluster.js` ahora lo configura correctamente, pero tenlo en cuenta si reconfiguras los pares manualmente.
 
-## Not implemented here
+## Aspectos no implementados aquí
 
-- Leader election or primary failover — if the primary goes down, no
-  automatic promotion happens. A real deployment would need this; it is
-  out of scope for the educational goal (demonstrating tamper detection).
-- Automatic recovery of a divergent node (e.g., a flagged node
-  resyncing itself from the majority). `/sync` only reports; it does not
-  act. Building an automatic-recovery endpoint is a reasonable extension
-  left for the team.
+* Selección de líder (*leader election*) o conmutación por error del primary (*primary failover*): si el primary se cae, no ocurre ninguna promoción automática. Un despliegue en producción requeriría esto; está fuera del alcance del objetivo educativo (demostrar la detección de alteraciones).
+* Recuperación automática de un nodo divergente (por ejemplo, que un nodo marcado se resincronice a sí mismo desde la mayoría): `/sync` solo reporta, no ejecuta acciones. Construir un endpoint de recuperación automática es una extensión razonable dejada para el equipo.

@@ -1,44 +1,15 @@
 # eligibility-authority
 
-Issues Ed25519-signed, time-limited ballot credentials to eligible voters.
-See the root `docs/THREAT_MODEL.md` for how this fits into the system's
-overall security properties. This document covers one design decision in
-detail, because it has a real operational cost and deserves to be visible.
+Emite credenciales de votación con tiempo limitado y firmadas con Ed25519 a votantes elegibles. Consulta `docs/THREAT_MODEL.md` en la raíz para entender cómo encaja esto en las propiedades generales de seguridad del sistema. Este documento aborda en detalle una decisión de diseño, ya que conlleva un costo operativo real y merece ser visible.
 
-## The `has_voted`-at-issuance tradeoff
+## La relación de compromiso de marcar `has_voted` en el momento de la emisión
 
-A voter's `has_voted` flag is set the moment a credential is **issued**,
-not when it is later **redeemed** on the ledger.
+El indicador `has_voted` de un votante se establece en el momento exacto en que se **emite** una credencial, no cuando esta se **redime** posteriormente en el libro de registro (*ledger*).
 
-**Why not mark it at redemption instead?** That would require `ledger-node`
-to tell `eligibility-authority` "voter X's token was just consumed" —
-which is a direct, explicit link between an identity and the moment a vote
-was cast. That is a *worse* anonymity property than the passive
-timing-correlation risk already accepted and documented in
-`docs/THREAT_MODEL.md`: there, the authority merely *could* infer a link by
-analyzing its own logs after the fact; with a redemption callback, it would
-be *told* the link outright, in real time. Marking at issuance avoids
-building that callback at all — `eligibility-authority` never learns
-anything about what happens to a token after it hands it out.
+**¿Por qué no marcarlo al momento de la redención en su lugar?** Eso requeriría que `ledger-node` le notifique a `eligibility-authority` que "el token del votante X acaba de ser utilizado", lo cual representa un vínculo directo y explícito entre una identidad y el momento exacto en que se emitió el voto. Esta es una propiedad de anonimato *peor* que el riesgo pasivo de correlación temporal que ya se acepta y documenta en `docs/THREAT_MODEL.md`: allí, la autoridad meramente *podría* inferir un vínculo analizando sus propios registros a posteriori; con una llamada de retorno (*callback*) en la redención, se le *notificaría* el vínculo de manera directa y en tiempo real. Marcar el estado en la emisión evita construir dicha llamada de retorno por completo: `eligibility-authority` nunca llega a saber nada sobre lo que ocurre con un token después de entregarlo.
 
-**The cost:** if a voter is issued a credential and lets it expire without
-voting (`CREDENTIAL_TTL_MS`, default 15 minutes), they are locked out.
-`has_voted` is already `1`, and nothing in this service will reissue them a
-new token. This is a deliberate choice to close a security gap (see
-`src/issuance.js` for the full reasoning), accepted at the cost of a
-possible support burden.
+**El costo:** si a un votante se le emite una credencial y permite que expire sin haber votado (`CREDENTIAL_TTL_MS`, por defecto 15 minutos), queda bloqueado. El valor de `has_voted` ya es `1` y ningún mecanismo en este servicio le reemitirá un nuevo token. Esta es una decisión deliberada para cerrar una brecha de seguridad (consulta `src/issuance.js` para el razonamiento completo), aceptada a cambio de un posible costo de soporte.
 
-**Mitigating the lock-out:** the practical fix is operational, not
-cryptographic — pick a `CREDENTIAL_TTL_MS` generous enough relative to how
-long voting stays open that expiry-before-voting is rare in practice.
+**Mitigación del bloqueo:** la solución práctica es operativa, no criptográfica: definir un valor de `CREDENTIAL_TTL_MS` lo suficientemente amplio con respecto al tiempo que permanece abierta la votación, de modo que la expiración previa a la emisión del voto sea un evento raro en la práctica.
 
-**Extension point left for the team:** an admin endpoint
-(e.g. `POST /admin/reset-voter { voter_id }`) that clears `has_voted` for a
-specific voter would let staff manually recover a legitimately locked-out
-voter, without weakening the design above — it is an explicit, audited,
-human-triggered override, not an automatic one. This is **not implemented**
-here on purpose: it needs its own authentication/authorization story (who
-is allowed to call it, and how that's enforced) which is outside this
-service's current scope. If you build it, log every use — this endpoint is
-the one place in the system that can knowingly let someone vote twice if
-misused.
+**Punto de extensión sugerido para el equipo:** un endpoint de administración (por ejemplo, `POST /admin/reset-voter { voter_id }`) que limpie el estado `has_voted` para un votante específico permitiría al personal recuperar manualmente a un votante bloqueado de manera legítima, sin debilitar el diseño anterior. Se trataría de una anulación explícita, auditada y desencadenada por un operador humano, no de un proceso automático. Esto **no está implementado** aquí a propósito: requiere definir su propia estrategia de autenticación/autorización (quién tiene permitido invocarlo y cómo se hace cumplir), lo cual está fuera del alcance actual de este servicio. Si deciden construirlo, registren en bitácoras (*logs*) cada uso: este endpoint es el único punto en el sistema que, de usarse de forma indebida, podría permitir a alguien votar dos veces de manera alevosa.

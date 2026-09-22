@@ -1,95 +1,75 @@
 # voter-client
 
-A Python CLI that casts a vote: it takes a ballot credential from
-`eligibility-authority`, encrypts a vote so only `tally-authority` can ever
-read it, signs the encrypted package, and submits it to the primary
-`ledger-node`.
+Una CLI en Python que emite un voto: toma una credencial de votación desde `eligibility-authority`, cifra un voto de modo que solo `tally-authority` pueda leerlo, firma el paquete cifrado y lo envía al `ledger-node` primario.
 
-The signing keypair is generated fresh in memory for every vote and
-discarded immediately after — it never touches disk and is never sent
-anywhere. `voter_public_key` in the submitted package exists so whoever
-later decrypts the vote can verify it wasn't altered in transit; since the
-key is freshly generated per vote, it carries no voter identity.
+El par de claves de firma se genera desde cero en memoria para cada voto y se descarta inmediatamente después; nunca toca el disco ni se envía a ninguna parte. La propiedad `voter_public_key` en el paquete enviado existe para que quien descifre el voto más adelante pueda verificar que no fue alterado en tránsito. Dado que la clave se genera de forma nueva por cada voto, no porta ninguna identidad del votante.
 
-## Setup
+## Configuración inicial
 
 ```bash
 pip install -r requirements.txt
+
 ```
 
-## Usage
+## Uso
 
 ```bash
 echo '{"candidate":"alice"}' | python voter_client.py \
   --primary-url http://localhost:4001 \
   --tally-authority-url http://localhost:5000 \
   --credential-file credential.json
+
 ```
 
-- `--primary-url` — base URL of the primary `ledger-node`
-- `--tally-authority-url` — base URL of `tally-authority`, used only to fetch its public key (`GET /public-key`) for encrypting the vote — it never sees the plaintext
-- `--credential-file` — path to a JSON file with `{token, issued_at, expires_at, signature}`, as returned by `eligibility-authority`'s `POST /identify`
-- The vote itself (any JSON object) is read from **stdin**
+* `--primary-url` — URL base del `ledger-node` primario.
+* `--tally-authority-url` — URL base de `tally-authority`, utilizada únicamente para obtener su clave pública (`GET /public-key`) para cifrar el voto; nunca ve el texto en plano.
+* `--credential-file` — ruta a un archivo JSON con `{token, issued_at, expires_at, signature}`, tal como lo retorna el endpoint `POST /identify` de `eligibility-authority`.
+* El voto en sí (cualquier objeto JSON) se lee desde la entrada estándar (**stdin**).
 
-On success, prints the appended block (JSON) to stdout and exits `0`. On
-failure, prints one line to stderr in the form `[ErrorType] (code):
-message` and exits `1`. Error types: `CredentialFileError`,
-`VoteInputError`, `ElectionKeyFetchError`, `NetworkError`,
-`VoteRejectedError`.
+En caso de éxito, imprime el bloque añadido (JSON) en `stdout` y finaliza con código `0`. En caso de falla, imprime una línea en `stderr` con el formato `[ErrorType] (code): message` y finaliza con código `1`. Tipos de errores: `CredentialFileError`, `VoteInputError`, `ElectionKeyFetchError`, `NetworkError`, `VoteRejectedError`.
 
-## Reproducing an end-to-end vote by hand
+## Reproducción manual de un voto de extremo a extremo
 
 ```bash
-# from the repo root, with eligibility-authority (:4000), the ledger-node
-# dev-cluster (:4001-4003), and tally-authority's key server (:5000)
-# already running (see services/tally-authority/README.md for setup)
+# Desde la raíz del repositorio, con eligibility-authority (:4000), el clúster de
+# desarrollo de ledger-node (:4001-4003) y el servidor de claves de tally-authority (:5000)
+# ya en ejecución (consulta services/tally-authority/README.md para la configuración inicial)
 
-# 1. get a real credential
+# 1. Obtener una credencial real
 curl -s -X POST http://localhost:4000/identify \
   -H "Content-Type: application/json" \
   -d '{"voter_id":"VOTANTE001"}' \
   | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['credential']))" \
   > credential.json
 
-# 2. cast the vote through the primary
+# 2. Emitir el voto a través del primary
 echo '{"candidate":"alice","choice_id":1}' | python voter_client.py \
   --primary-url http://localhost:4001 \
   --tally-authority-url http://localhost:5000 \
   --credential-file credential.json
 
-# 3. confirm it replicated
+# 3. Confirmar que se replicó
 curl -s http://localhost:4002/chain | python3 -m json.tool
 curl -s http://localhost:4003/chain | python3 -m json.tool
 
-# 4. voting again with the same credential is rejected
+# 4. Volver a votar con la misma credencial es rechazado
 echo '{"candidate":"bob"}' | python voter_client.py \
   --primary-url http://localhost:4001 \
   --tally-authority-url http://localhost:5000 \
   --credential-file credential.json
 # -> [VoteRejectedError] (400): this ballot token has already been used
+
 ```
 
-## Tests
+## Pruebas (*Tests*)
 
 ```bash
 pytest
+
 ```
 
-Covers `crypto_utils.py`'s AES-GCM/RSA-OAEP/Ed25519 round trip and verifies
-`canonical_json` byte-matches `packages/shared/src/canonical.js`'s
-`canonicalStringify` against fixtures generated from the JS implementation
-(no Node dependency at test time — see the fixtures' comment in
-`test_crypto_utils.py` for how to regenerate them if `canonical.js`
-changes).
+Cubre el ciclo completo de cifrado y firma AES-GCM/RSA-OAEP/Ed25519 en `crypto_utils.py` y verifica que `canonical_json` coincida byte por byte con `canonicalStringify` de `packages/shared/src/canonical.js` utilizando accesorios (*fixtures*) generados a partir de la implementación en JS (sin dependencia de Node durante la ejecución de las pruebas; consulta el comentario sobre accesorios en `test_crypto_utils.py` para saber cómo regenerarlos si `canonical.js` cambia).
 
-## Why the election key comes from tally-authority, not ledger-node
+## Por qué la clave de la elección proviene de tally-authority y no de ledger-node
 
-`voter-client` fetches the election's RSA-OAEP public key directly from
-`tally-authority`'s own `GET /public-key` — the same pattern
-`eligibility-authority` and every `ledger-node` already use to publish
-their own public keys. `ledger-node` never serves this key: it doesn't
-custody it, and having it "vouch" for a key that belongs to a different,
-independent service would be exactly the kind of cross-service filesystem
-or API coupling this project avoids elsewhere. See
-`services/tally-authority/README.md` for how the keypair is generated and
-served.
+`voter-client` obtiene la clave pública RSA-OAEP de la elección directamente del endpoint `GET /public-key` de `tally-authority`, siguiendo el mismo patrón que `eligibility-authority` y cada `ledger-node` ya utilizan para publicar sus propias claves públicas. `ledger-node` nunca sirve esta clave: no la custodia, y hacer que "respalde" una clave perteneciente a un servicio diferente e independiente sería exactamente el tipo de acoplamiento de API o sistema de archivos entre servicios que este proyecto evita en otros puntos. Consulta `services/tally-authority/README.md` para conocer cómo se genera y sirve el par de claves.

@@ -1,140 +1,101 @@
-# Secure Voting (Educational Project)
+# Secure Voting (Demo)
 
-An educational voting system that separates ballot secrecy from ledger
-integrity across independent processes 
-This demonstrates why a single hash-chained log is not, by itself, a
-blockchain — multi-node consensus is what makes tampering detectable (anterior version)
+Un sistema de votación educativo que separa el secreto del voto de la integridad del libro de registro (*ledger*) a través de procesos independientes.
 
-## Architecture
+Esto demuestra por qué un único registro encadenado por hashes no es, por sí solo, una blockchain: el consenso entre múltiples nodos es lo que permite detectar manipulaciones.
+
+## Arquitectura
 
 ```
-eligibility-authority (Node.js, single instance)
-  - voter roll (SQLite)
-  - issues signed, single-use ballot tokens
-  - never sees vote content
+eligibility-authority (Node.js, instancia única)
+  - padrón de votantes (SQLite)
+  - emite tokens de votación firmados y de un solo uso
+  - nunca ve el contenido del voto
 
-voter-client (Python CLI)
-  - generates an ephemeral keypair locally, never sent to any server
-  - encrypts (AES-GCM + RSA-OAEP) and signs (RSA-PSS) the vote
-  - submits the encrypted package to any ledger-node
+voter-client (CLI en Python)
+  - genera un par de claves efímero localmente, nunca enviado a ningún servidor
+  - cifra (AES-GCM + RSA-OAEP) y firma (RSA-PSS) el voto
+  - envía el paquete cifrado a cualquier ledger-node
 
-ledger-node x N (Node.js, one process per port; one "primary", the rest "replica")
-  - primary: verifies the ballot token's signature and that it hasn't been
-    used, appends the vote as a block, broadcasts it to every replica
-  - replica: independently validates every broadcast block before
-    appending it — never trusts the primary blindly
-  - all nodes: /sync compares chains across peers and flags divergence;
-    never holds any key capable of decrypting a vote
+ledger-node x N (Node.js, un proceso por puerto; un "primary", el resto "replica")
+  - primary: verifica la firma del token de votación y que no haya sido
+    utilizado, añade el voto como un bloque y lo transmite a cada réplica
+  - replica: valida de forma independiente cada bloque transmitido antes de
+    añadirlo; nunca confía ciegamente en el primary
+  - todos los nodos: /sync compara cadenas entre pares e indica divergencias;
+    ningún nodo posee clave alguna capaz de descifrar un voto
 
-tally-authority (Python, separate service)
-  - the only holder of the election's decryption private key
-  - reads the consolidated chain via the ledger-nodes' API
-  - decrypts and counts, after voting closes
-  - does not participate in ledger consensus
+tally-authority (Python, servicio independiente)
+  - el único poseedor de la clave privada de descifrado de la elección
+  - lee la cadena consolidada a través de la API de los ledger-nodes
+  - descifra y realiza el recuento tras el cierre de la votación
+  - no participa en el consenso del libro de registro
+
 ```
 
-## Repository layout
+## Estructura del repositorio
 
 ```
 apps/
-  eligibility-authority/   Express app — voter roll and ballot token issuance
-  ledger-node/              Express app — run N times, one port per node
+  eligibility-authority/    Aplicación Express — padrón de votantes y emisión de tokens de votación
+  ledger-node/              Aplicación Express — se ejecuta N veces, un puerto por nodo
 services/
-  tally-authority/          Python service — election decryption key + count
+  tally-authority/          Servicio Python — clave de descifrado de la elección + recuento
 tools/
-  voter-client/              Python CLI — casts a vote
+  voter-client/              CLI en Python — emite un voto
 packages/
-  shared/                    JS: canonical hashing, block schema, consensus
+  shared/                    JS: hashing canónico, esquema de bloques, consenso
 docs/
-  THREAT_MODEL.md            What this protects, and what it explicitly does not
+  THREAT_MODEL.md            Qué protege este sistema y qué deja explícitamente fuera de alcance
+
 ```
 
-## Status
+## Estado del proyecto
 
-Currently implemented:
+Implementado actualmente:
 
-- `packages/shared` — canonical JSON serialization, block hashing, chain
-  integrity checks, majority-hash divergence detection. Test suite covers
-  the "sophisticated tamper" scenario: a locally consistent chain that
-  still disagrees with the network.
-- `apps/eligibility-authority` — voter roll (SQLite), Ed25519-signed,
-  time-limited ballot credentials, race-free issuance (single
-  synchronous transaction), idempotent reissue of an unexpired credential.
-  See `apps/eligibility-authority/README.md` for the `has_voted`-at-issuance
-  tradeoff, its operational cost, and a suggested (unimplemented) admin
-  extension point for the team.
+* `packages/shared` — serialización JSON canónica, hashing de bloques, verificaciones de integridad de la cadena y detección de divergencias por mayoría de hash. La suite de pruebas cubre el escenario de "manipulación sofisticada": una cadena localmente consistente pero que difiere de la red.
+* `apps/eligibility-authority` — padrón de votantes (SQLite), credenciales de votación firmadas con Ed25519 y con tiempo limitado, emisión libre de condiciones de carrera (transacción síncrona única) y reemisión idempotente de credenciales no expiradas. Consulta `apps/eligibility-authority/README.md` para conocer la relación de compromiso de `has_voted` al momento de la emisión, su costo operativo y un punto de extensión de administración sugerido (no implementado) para el equipo.
+* `apps/ledger-node` — libro de registro replicado primary/replica. El primary acepta votos y propone bloques; cada réplica valida de forma independiente cada bloque transmitido (continuidad de la cadena, corrección del hash, firma) antes de añadirlo. Dos mecanismos complementarios de detección de manipulaciones —autenticación de firma local y comparación por mayoría entre nodos— están documentados y demostrados en vivo en `apps/ledger-node/README.md`, incluyendo un recorrido reproducible con `curl` para escenarios de "réplica comprometida" y "primary comprometido".
+* `tools/voter-client` — CLI en Python. Genera un par de claves Ed25519 efímero por voto (solo en memoria, nunca se persiste ni transmite), cifra el voto con AES-GCM, envuelve la clave AES con la clave pública RSA-OAEP de la elección (obtenida de `tally-authority`), firma el paquete y lo envía al primary. Consulta `tools/voter-client/README.md`.
+* `services/tally-authority` — único poseedor de la clave de descifrado RSA de la elección. Sirve su clave pública sobre HTTP desde el inicio de la votación (`GET /public-key`, usando `http.server` de la librería estándar, sin frameworks); tras el cierre de la votación, un script CLI independiente obtiene la cadena **en bruto** (*raw*) de cada `ledger-node` configurado de forma independiente, calcula el acuerdo por mayoría bloque por bloque (sin confiar nunca en el `/sync` de ningún nodo) y cuenta únicamente los bloques que alcancen la mayoría. Cualquier bloque que no la alcance es excluido del recuento y reportado explícitamente, nunca descartado en silencio. Consulta `services/tally-authority/README.md`.
 
-- `apps/ledger-node` — primary/replica replicated ledger. The primary
-  accepts votes and proposes blocks; every replica independently validates
-  each broadcast block (chain continuity, hash correctness, signature)
-  before appending it. Two complementary tamper-detection mechanisms —
-  local signature authentication and cross-node majority comparison — are
-  documented and demonstrated live in `apps/ledger-node/README.md`,
-  including a reproducible `curl` walkthrough of both the
-  "compromised replica" and "compromised primary" scenarios.
-- `tools/voter-client` — Python CLI. Generates an ephemeral Ed25519
-  keypair per vote (in memory only, never persisted or transmitted),
-  encrypts the vote with AES-GCM, wraps the AES key with the election's
-  RSA-OAEP public key (fetched from `tally-authority`), signs the package,
-  and submits it to the primary. See `tools/voter-client/README.md`.
-- `services/tally-authority` — the only holder of the election's RSA
-  decryption key. Serves its public key over HTTP from the start of
-  voting (`GET /public-key`, stdlib `http.server`, no framework); after
-  voting closes, a separate CLI script fetches the **raw** chain from
-  every configured `ledger-node` independently, computes majority
-  agreement itself block by block (never trusting any node's own
-  `/sync`), and counts only blocks that reach majority — anything that
-  doesn't is excluded from the count and reported explicitly, never
-  silently dropped. See `services/tally-authority/README.md`.
+Todo lo descrito anteriormente está implementado y cubierto por pruebas.
 
-Everything described above is implemented and covered by tests.
+## Configuración inicial
 
-## Setup
-
-One-time install:
+Instalación por única vez:
 
 ```bash
 pnpm install
 pip install -r tools/voter-client/requirements.txt
 pip install -r services/tally-authority/requirements.txt
+
 ```
 
-`eligibility-authority` reads its configuration from environment variables
-(see `apps/eligibility-authority/.env.example`); copy it to `.env` in that
-directory to override defaults locally. The Python services aren't part of
-the pnpm workspace — each has its own `requirements.txt`, documented in
-its own README.
+`eligibility-authority` lee su configuración desde variables de entorno (consulta `apps/eligibility-authority/.env.example`); cópialo a `.env` en ese directorio para sobrescribir los valores por defecto localmente. Los servicios de Python no forman parte del workspace de pnpm; cada uno tiene su propio `requirements.txt`, documentado en su propio README.
 
 ```bash
-pnpm test           # runs every JS workspace package's test script
-pytest tools/voter-client services/tally-authority   # Python test suites
+pnpm test                               # ejecuta el script de prueba de cada paquete JS del workspace
+pytest tools/voter-client services/tally-authority   # suites de prueba de Python
+
 ```
 
-## Running the whole system
+## Ejecución del sistema completo
 
-**Starting every service is one command:**
+**Iniciar todos los servicios requiere un solo comando:**
 
 ```bash
 pnpm dev:all
+
 ```
 
-This starts `eligibility-authority` (:4000), the 3-node `ledger-node`
-cluster (:4001–4003, one primary + two replicas), and `tally-authority`'s
-public-key server (:5000) — five processes, one command. It's safe to
-re-run: election keypair generation is bundled in but idempotent (the
-generator refuses to overwrite an existing keypair, so this never
-regenerates one silently — see `services/tally-authority/README.md` for
-why that specific key is treated differently from every other key in the
-system).
+Esto inicia `eligibility-authority` (:4000), el clúster de 3 nodos de `ledger-node` (:4001–4003, un primary + dos réplicas) y el servidor de clave pública de `tally-authority` (:5000): cinco procesos en un solo comando. Es seguro volver a ejecutarlo: la generación del par de claves de la elección está incluida pero es idempotente (el generador se rehúsa a sobrescribir un par de claves existente, por lo que nunca regenerará una en silencio; consulta `services/tally-authority/README.md` para entender por qué esa clave específica se trata de forma distinta a cualquier otra clave del sistema).
 
-**Casting a vote and tallying stay separate, deliberate commands** — this
-isn't a limitation, it's the point: a real election has many independent
-voters acting over time, and exactly one counting step that only happens
-after voting closes. Collapsing those into the startup command would
-misrepresent what the system actually demonstrates.
+**Emitir un voto y realizar el recuento permanecen como comandos deliberadamente separados**; esto no es una limitación, es el propósito: una elección real cuenta con múltiples votantes independientes actuando a lo largo del tiempo, y un único paso de recuento que solo ocurre tras el cierre de la votación. Colapsar ambos en el comando de inicio distorsionaría lo que el sistema realmente demuestra.
 
 ```bash
-# 1. get a real ballot credential for a voter (three demo voters exist:
+# 1. Obtener una credencial de votación real para un votante (existen tres votantes de demostración:
 #    VOTANTE001, VOTANTE002, VOTANTE003)
 curl -s -X POST http://localhost:4000/identify \
   -H "Content-Type: application/json" \
@@ -142,74 +103,41 @@ curl -s -X POST http://localhost:4000/identify \
   | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['credential']))" \
   > credential.json
 
-# 2. cast the vote (any JSON object) through the primary
+# 2. Emitir el voto (cualquier objeto JSON) a través del primary
 echo '{"candidate":"alice"}' | python tools/voter-client/voter_client.py \
   --primary-url http://localhost:4001 \
   --tally-authority-url http://localhost:5000 \
   --credential-file credential.json
 
-# repeat steps 1-2 for VOTANTE002, VOTANTE003, ... as many voters as you like
+# Repetir los pasos 1 y 2 para VOTANTE002, VOTANTE003, ... para tantos votantes como desees
 
-# 3. after voting closes, tally — queries every ledger-node independently
+# 3. Tras el cierre de la votación, realizar el recuento (consulta cada ledger-node de forma independiente)
 python services/tally-authority/tally.py \
   --ledger-urls http://localhost:4001,http://localhost:4002,http://localhost:4003
+
 ```
 
-The tally's output reports both the vote counts and any block that failed
-to reach majority agreement across nodes — see
-`services/tally-authority/README.md` for what that looks like when a node
-is tampered with, and `apps/ledger-node/README.md` for the `POST
-/admin/tamper` demo endpoint used to simulate it (local/educational use
-only — no authentication, never expose it otherwise).
+La salida del recuento informa tanto los totales de votos como cualquier bloque que no haya alcanzado el acuerdo por mayoría entre los nodos. Consulta `services/tally-authority/README.md` para ver cómo se visualiza cuando un nodo ha sido alterado, y `apps/ledger-node/README.md` para conocer el endpoint de demostración `POST /admin/tamper` utilizado para simularlo (uso local/educativo únicamente; no tiene autenticación, nunca debe exponerse en otro entorno).
 
-## Restart all the services:
+## Reiniciar todos los servicios
 
-Use this commands or delete those files manually:
+Utiliza estos comandos o elimina los archivos manualmente:
+
 ```bash
 rm -rf apps/eligibility-authority/data apps/eligibility-authority/keys
 rm -rf apps/ledger-node/data apps/ledger-node/keys
 rm -rf services/tally-authority/keys
+
 ```
 
-## Extension points: constraining the demo for a real run
+## Puntos de extensión: delimitación de la demo para una ejecución real
 
-Three things are deliberately unconstrained right now — fine for a demo,
-but worth knowing before you run this with a real group:
+Tres aspectos se encuentran deliberadamente sin delimitar en este momento; esto es adecuado para una demostración, pero vale la pena tenerlo en cuenta antes de ejecutarlo con un grupo real:
 
-- **Voter roster is a hardcoded whitelist.** `apps/eligibility-authority/src/db.js`
-  seeds exactly `VOTANTE001`–`VOTANTE003` (the `DEMO_VOTERS` array) the
-  first time its database is empty — it is not a range, so `VOTANTE010`
-  is simply not eligible (`POST /identify` returns `403`). To support
-  your own roster: either edit `DEMO_VOTERS` directly, or add a real
-  import path (a `POST /admin/import-voters` endpoint, or a seed script
-  reading a CSV) — same audited-admin-action pattern already used for the
-  suggested (unimplemented) `has_voted` reset endpoint in
-  `apps/eligibility-authority/README.md`. There is currently no built-in
-  way to auto-assign voter IDs; that logic would live here too.
-- **`voter-client`'s two URL flags are independent and both matter.**
-  `--primary-url` is where the vote is *submitted* (any `ledger-node`
-  configured with `ROLE=primary`); `--tally-authority-url` is only used
-  to *fetch the encryption key* before submitting. Pointing either one at
-  the wrong place fails at a different step (`ElectionKeyFetchError` vs.
-  `NetworkError`/`VoteRejectedError`) — see `tools/voter-client/README.md`.
-- **The vote payload is unrestricted JSON.** Nothing in `ledger-node` or
-  `tally-authority` validates it against a candidate list — by design,
-  neither component ever inspects vote content before `tally-authority`
-  decrypts it after close. Whatever key/value shape `voter-client` is
-  given on stdin is exactly what gets counted, verbatim. To restrict
-  voting to a fixed candidate list, add that validation client-side, in
-  `tools/voter-client/voter_client.py`, before encryption — validating
-  downstream in `ledger-node` or `tally-authority` would mean one of them
-  has to understand vote content, which breaks the opacity both are built
-  around.
+* **El padrón de votantes es una lista blanca definida en código (*hardcoded*).** `apps/eligibility-authority/src/db.js` inserta únicamente a `VOTANTE001`–`VOTANTE003` (el arreglo `DEMO_VOTERS`) la primera vez que su base de datos está vacía. No es un rango, por lo que `VOTANTE010` simplemente no es elegible (`POST /identify` retorna `403`). Para admitir un padrón propio: edita `DEMO_VOTERS` directamente o añade una ruta de importación real (un endpoint `POST /admin/import-voters` o un script de inicialización que lea un CSV), siguiendo el mismo patrón de acción administrativa auditada que ya se utiliza para el endpoint de reinicio de `has_voted` sugerido (no implementado) en `apps/eligibility-authority/README.md`. Actualmente no existe una forma integrada de autoasignar IDs de votante; esa lógica también residiría aquí.
+* **Los dos parámetros de URL en `voter-client` son independientes y ambos son críticos.** `--primary-url` es donde se *envía* el voto (cualquier `ledger-node` configurado con `ROLE=primary`); `--tally-authority-url` solo se utiliza para *obtener la clave de descifrado* antes de realizar el envío. Apuntar cualquiera de los dos al lugar equivocado fallará en una etapa distinta (`ElectionKeyFetchError` frente a `NetworkError`/`VoteRejectedError`); consulta `tools/voter-client/README.md`.
+* **La carga útil (*payload*) del voto es un JSON sin restricciones.** Nada en `ledger-node` ni en `tally-authority` valida su contenido contra una lista de candidatos. Por diseño, ninguno de los dos componentes inspecciona el contenido del voto antes de que `tally-authority` lo descifre tras el cierre. La estructura clave/valor que se le pase a `voter-client` por entrada estándar (*stdin*) será exactamente lo que se cuente, de forma literal. Para restringir la votación a una lista fija de candidatos, añade dicha validación en el lado del cliente, en `tools/voter-client/voter_client.py`, antes del cifrado. Validar más adelante en `ledger-node` o `tally-authority` implicaría que alguno de ellos deba entender el contenido del voto, rompiendo la opacidad sobre la cual están construidos ambos componentes.
 
-## Deployment note for the team
+## Nota de despliegue para el equipo
 
-Ledger nodes currently run as plain Node processes on localhost, on
-different ports, with no containerization — this was a deliberate
-simplification to keep the educational focus on consensus logic rather
-than container networking. If you want to move this to Docker (one
-container per ledger node, a Docker network in place of localhost ports),
-that is a reasonable next step and does not require changes to
-`packages/shared` — only to how each `ledger-node` process is started and
-how peers are addressed.
+Los nodos del libro de registro se ejecutan actualmente como procesos estándar de Node en `localhost`, en puertos diferentes y sin contenedorización. Esta fue una simplificación deliberada para mantener el enfoque educativo en la lógica de consenso en lugar de la red entre contenedores. Si se desea migrar esto a Docker (un contenedor por nodo de registro, una red de Docker en lugar de puertos en `localhost`), es un paso siguiente razonable que no requiere cambios en `packages/shared`, sino únicamente en la forma en que se inicia cada proceso de `ledger-node` y cómo se comunican los pares (*peers*).
